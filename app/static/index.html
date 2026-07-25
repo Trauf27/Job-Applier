@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Job Applier</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎯</text></svg>" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">🎯</span>
+      <h1>Job Applier</h1>
+    </div>
+    <div class="topbar-right">
+      <span id="llm-status" class="pill pill-muted">checking…</span>
+      <button id="sync-btn" class="btn btn-primary">Sync boards</button>
+    </div>
+  </header>
+
+  <nav class="tabs" id="tabs">
+    <button class="tab is-active" data-view="jobs">Jobs<span class="count" id="count-jobs"></span></button>
+    <button class="tab" data-view="pipeline">Pipeline<span class="count" id="count-apps"></span></button>
+    <button class="tab" data-view="profile">Profile</button>
+    <button class="tab" data-view="companies">Companies<span class="count" id="count-companies"></span></button>
+  </nav>
+
+  <main>
+    <!-- JOBS -->
+    <section id="view-jobs" class="view is-active">
+      <div class="toolbar">
+        <input id="job-search" type="search" placeholder="Search title, company, location…" />
+        <label class="inline">Min score
+          <input id="min-score" type="range" min="0" max="100" step="5" value="40" />
+          <output id="min-score-out">40</output>
+        </label>
+        <label class="inline checkbox"><input id="only-untracked" type="checkbox" /> Untracked only</label>
+        <button id="rescore-btn" class="btn btn-ghost" title="Re-run local scoring after editing your profile">Re-score</button>
+      </div>
+      <div id="jobs-list" class="list"></div>
+    </section>
+
+    <!-- PIPELINE -->
+    <section id="view-pipeline" class="view">
+      <div class="toolbar">
+        <p class="hint">Everything you've tracked. Move a row through the stages as you hear back.</p>
+      </div>
+      <div id="pipeline-board" class="board"></div>
+    </section>
+
+    <!-- PROFILE -->
+    <section id="view-profile" class="view">
+      <div class="panel">
+        <h2>Import from a resume</h2>
+        <p class="hint">Paste your current resume and Claude will fill the fields below. Nothing is
+          saved until you press Save profile — review the extraction first.</p>
+        <textarea id="resume-paste" rows="6" placeholder="Paste resume text here…"></textarea>
+        <button id="parse-resume-btn" class="btn">Extract into form</button>
+      </div>
+
+      <form id="profile-form" class="panel">
+        <h2>Your profile</h2>
+        <div class="grid-2">
+          <label>Full name<input name="name" /></label>
+          <label>Email<input name="email" type="email" /></label>
+          <label>Phone<input name="phone" /></label>
+          <label>Location<input name="location" placeholder="Austin, TX" /></label>
+        </div>
+        <label>Headline<input name="headline" placeholder="Senior Backend Engineer · Payments & Infra" /></label>
+        <label>Links <span class="hint-inline">one per line</span>
+          <textarea name="links" rows="3" placeholder="https://github.com/you"></textarea>
+        </label>
+        <label>Summary<textarea name="summary" rows="4"></textarea></label>
+
+        <h3>What you're looking for</h3>
+        <div class="grid-2">
+          <label>Target titles <span class="hint-inline">one per line</span>
+            <textarea name="target_titles" rows="4" placeholder="Senior Software Engineer"></textarea>
+          </label>
+          <label>Target locations <span class="hint-inline">one per line</span>
+            <textarea name="target_locations" rows="4" placeholder="Austin&#10;Remote US"></textarea>
+          </label>
+          <label>Skills <span class="hint-inline">one per line — these drive matching</span>
+            <textarea name="skills" rows="6" placeholder="Python&#10;PostgreSQL&#10;Kubernetes"></textarea>
+          </label>
+          <label>Exclude keywords <span class="hint-inline">one per line — heavy score penalty</span>
+            <textarea name="exclude_keywords" rows="6" placeholder="on-call rotation&#10;security clearance"></textarea>
+          </label>
+        </div>
+        <div class="grid-3">
+          <label>Seniority
+            <select name="seniority">
+              <option value="">(unset)</option>
+              <option>intern</option><option>junior</option><option>mid</option>
+              <option>senior</option><option>staff</option><option>principal</option>
+              <option>manager</option>
+            </select>
+          </label>
+          <label>Minimum salary<input name="min_salary" type="number" placeholder="150000" /></label>
+          <label class="checkbox-block"><input name="remote_ok" type="checkbox" /> Open to remote</label>
+        </div>
+
+        <h3>Experience</h3>
+        <div id="experience-rows"></div>
+        <button type="button" id="add-experience" class="btn btn-ghost">+ Add role</button>
+
+        <h3>Education &amp; certifications</h3>
+        <div class="grid-2">
+          <label>Education <span class="hint-inline">one per line: School — Degree — Year</span>
+            <textarea name="education" rows="3"></textarea>
+          </label>
+          <label>Certifications <span class="hint-inline">one per line</span>
+            <textarea name="certifications" rows="3"></textarea>
+          </label>
+        </div>
+
+        <div class="form-actions">
+          <button type="submit" class="btn btn-primary">Save profile</button>
+          <span id="profile-saved" class="saved-note"></span>
+        </div>
+      </form>
+    </section>
+
+    <!-- COMPANIES -->
+    <section id="view-companies" class="view">
+      <div class="panel">
+        <h2>Add a company board</h2>
+        <p class="hint">Paste any job URL from the company (Greenhouse, Lever, or Ashby) and the
+          board details are filled in for you.</p>
+        <div class="row">
+          <input id="detect-url" placeholder="https://boards.greenhouse.io/acme/jobs/12345" />
+          <button id="detect-btn" class="btn">Detect</button>
+        </div>
+        <div class="row">
+          <input id="company-name" placeholder="Company name" />
+          <select id="company-ats"></select>
+          <input id="company-slug" placeholder="board slug" />
+          <button id="add-company-btn" class="btn btn-primary">Add</button>
+        </div>
+        <details>
+          <summary>Suggestions to get started</summary>
+          <div id="suggestions" class="chips"></div>
+        </details>
+      </div>
+      <div id="companies-list" class="list"></div>
+    </section>
+  </main>
+
+  <!-- JOB DETAIL DRAWER -->
+  <aside id="drawer" class="drawer" hidden>
+    <div class="drawer-head">
+      <button id="drawer-close" class="btn btn-ghost" aria-label="Close">✕</button>
+      <div id="drawer-title"></div>
+    </div>
+    <div id="drawer-body" class="drawer-body"></div>
+  </aside>
+  <div id="scrim" class="scrim" hidden></div>
+
+  <div id="toast" class="toast" hidden></div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
