@@ -10,6 +10,11 @@ dependencies = [
     "anthropic>=0.40",
 ]
 
+[project.optional-dependencies]
+# Only needed to fill application forms. Everything else works without it.
+# After installing: playwright install chromium
+autofill = ["playwright>=1.40"]
+
 [project.scripts]
 job-applier = "app.__main__:main"
 

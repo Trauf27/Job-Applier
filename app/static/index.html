@@ -24,6 +24,7 @@
     <button class="tab" data-view="pipeline">Pipeline<span class="count" id="count-apps"></span></button>
     <button class="tab" data-view="profile">Profile</button>
     <button class="tab" data-view="companies">Companies<span class="count" id="count-companies"></span></button>
+    <button class="tab" data-view="agent">Agent<span class="count" id="count-agent"></span></button>
   </nav>
 
   <main>
@@ -143,7 +144,112 @@
           <div id="suggestions" class="chips"></div>
         </details>
       </div>
+      <div class="panel">
+        <h2>Import from LinkedIn</h2>
+        <p class="hint">LinkedIn blocks automated access and their terms forbid it, so nothing here
+          talks to linkedin.com. Paste content you already have and it gets parsed locally:
+          a <strong>job alert email</strong>, the copied text of a <strong>search results page</strong>,
+          or <strong>one job URL per line</strong> (optionally
+          <code>url | Title | Company | Location</code>).</p>
+        <textarea id="linkedin-paste" rows="6"
+          placeholder="Paste a LinkedIn job alert email, search results, or job URLs…"></textarea>
+        <button id="linkedin-import-btn" class="btn btn-primary">Import postings</button>
+        <p class="hint">Imported postings rarely carry a description, so they score on title,
+          company, and location alone. Where the company runs its own Greenhouse, Lever, or Ashby
+          board, add it above instead — the agent can poll that properly.</p>
+      </div>
+
       <div id="companies-list" class="list"></div>
+    </section>
+
+    <!-- AGENT -->
+    <section id="view-agent" class="view">
+      <div class="panel">
+        <div class="agent-head">
+          <div>
+            <h2>Autonomous runs</h2>
+            <p class="hint" id="agent-summary">…</p>
+          </div>
+          <div class="row">
+            <button id="agent-run-btn" class="btn btn-primary">Run now</button>
+            <button id="agent-stop-btn" class="btn btn-ghost" hidden>Stop</button>
+          </div>
+        </div>
+        <p class="hint" id="agent-schedule"></p>
+      </div>
+
+      <form id="agent-form" class="panel">
+        <h3>When it runs</h3>
+        <div class="grid-3">
+          <label class="checkbox-block"><input name="enabled" type="checkbox" />
+            Run on a schedule</label>
+          <label>Every <span class="hint-inline">minutes</span>
+            <input name="interval_minutes" type="number" min="15" max="10080" />
+          </label>
+          <label class="checkbox-block"><input name="sync_boards" type="checkbox" />
+            Sync company boards each run</label>
+        </div>
+
+        <h3>What it looks at</h3>
+        <div class="grid-2">
+          <label>Open feeds to search <span class="hint-inline">free public APIs it may poll</span>
+            <div id="agent-feeds" class="chips"></div>
+          </label>
+          <label>Never apply at <span class="hint-inline">one company per line</span>
+            <textarea name="company_blocklist" rows="3"></textarea>
+          </label>
+        </div>
+
+        <h3>What it shortlists</h3>
+        <div class="grid-3">
+          <label>Minimum local score <span class="hint-inline">before spending a model call</span>
+            <input name="min_score" type="number" min="0" max="100" />
+          </label>
+          <label>Minimum fit score <span class="hint-inline">Claude's own verdict</span>
+            <input name="review_min_score" type="number" min="0" max="100" />
+          </label>
+          <label>Follow up after <span class="hint-inline">days of silence</span>
+            <input name="followup_days" type="number" min="1" max="365" />
+          </label>
+        </div>
+
+        <h3>What it may spend</h3>
+        <div class="grid-2">
+          <label>Fit reviews per run<input name="max_reviews_per_run" type="number" min="0" max="50" /></label>
+          <label>Resumes tailored per run<input name="max_documents_per_run" type="number" min="0" max="25" /></label>
+          <label>Applications per run<input name="max_applications_per_run" type="number" min="0" max="25" /></label>
+          <label>Applications per day<input name="max_applications_per_day" type="number" min="0" max="50" /></label>
+        </div>
+
+        <h3>How far it goes</h3>
+        <div class="ladder">
+          <label class="checkbox-block"><input name="dry_run" type="checkbox" />
+            <span><strong>Dry run</strong> — plan and log only. No model calls, no documents,
+              nothing submitted.</span></label>
+          <label class="checkbox-block"><input name="auto_apply" type="checkbox" />
+            <span><strong>Fill application forms</strong> — opens a real browser, types what your
+              profile answers, uploads the tailored resume, and stops at the submit
+              button. <span id="autofill-note" class="hint-inline"></span></span></label>
+          <label class="checkbox-block danger"><input name="auto_submit" type="checkbox" />
+            <span><strong>Press submit too</strong> — applications get sent without you seeing
+              them first. Held back automatically on any form with unanswered required
+              fields.</span></label>
+          <label class="checkbox-block"><input name="headless" type="checkbox" />
+            <span>Hide the browser window while it fills forms.</span></label>
+        </div>
+        <p class="hint">Demographic, EEO, sponsorship, salary, and start-date questions are never
+          answered automatically, at any setting. They're left blank and listed for you.</p>
+
+        <div class="form-actions">
+          <button type="submit" class="btn btn-primary">Save agent settings</button>
+          <span id="agent-saved" class="saved-note"></span>
+        </div>
+      </form>
+
+      <div class="panel">
+        <h3>Run log</h3>
+        <div id="agent-runs" class="list"></div>
+      </div>
     </section>
   </main>
 

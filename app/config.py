@@ -40,6 +40,11 @@ PORT = int(os.environ.get("JOB_APPLIER_PORT", "8765"))
 ANTHROPIC_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-opus-5")
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 
+# Browser used to fill application forms. Playwright normally manages its own
+# Chromium; point this at an existing binary when Playwright's pinned build
+# isn't the one installed (it raises "Executable doesn't exist at …" when so).
+BROWSER_PATH = os.environ.get("JOB_APPLIER_BROWSER_PATH", "")
+
 # Networking for job-board fetches
 HTTP_TIMEOUT = float(os.environ.get("JOB_APPLIER_HTTP_TIMEOUT", "20"))
 USER_AGENT = os.environ.get(
@@ -51,3 +56,11 @@ USER_AGENT = os.environ.get(
 def ensure_dirs() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     DOCS_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def slugify(value: str) -> str:
+    """Filename-safe fragment. Shared so a job's documents, its rendered PDF, and
+    its screenshots all sort together in `data/documents`."""
+    import re
+
+    return re.sub(r"[^a-z0-9]+", "-", (value or "").lower()).strip("-")[:60] or "untitled"

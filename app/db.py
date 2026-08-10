@@ -92,6 +92,60 @@ SCHEMA_STATEMENTS = [
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_docs_job ON documents (job_id, kind)",
+    """
+    CREATE TABLE IF NOT EXISTS agent_settings (
+        id          INTEGER PRIMARY KEY CHECK (id = 1),
+        data        TEXT NOT NULL,
+        updated_at  TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS agent_runs (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        trigger      TEXT NOT NULL,
+        dry_run      INTEGER NOT NULL DEFAULT 1,
+        status       TEXT NOT NULL DEFAULT 'running',
+        started_at   TEXT NOT NULL,
+        finished_at  TEXT,
+        stats        TEXT NOT NULL DEFAULT '{}',
+        error        TEXT
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_runs_started ON agent_runs (started_at DESC)",
+    """
+    CREATE TABLE IF NOT EXISTS agent_actions (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        run_id      INTEGER NOT NULL REFERENCES agent_runs (id) ON DELETE CASCADE,
+        job_id      INTEGER REFERENCES jobs (id) ON DELETE SET NULL,
+        stage       TEXT NOT NULL,
+        decision    TEXT NOT NULL,
+        detail      TEXT NOT NULL DEFAULT '',
+        created_at  TEXT NOT NULL
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_actions_run ON agent_actions (run_id)",
+    "CREATE INDEX IF NOT EXISTS idx_actions_job ON agent_actions (job_id, stage)",
+    """
+    CREATE TABLE IF NOT EXISTS apply_attempts (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        job_id      INTEGER NOT NULL REFERENCES jobs (id) ON DELETE CASCADE,
+        method      TEXT NOT NULL,
+        status      TEXT NOT NULL,
+        form_url    TEXT NOT NULL DEFAULT '',
+        filled      TEXT NOT NULL DEFAULT '[]',
+        unfilled    TEXT NOT NULL DEFAULT '[]',
+        detail      TEXT NOT NULL DEFAULT '',
+        screenshot  TEXT,
+        created_at  TEXT NOT NULL
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_attempts_job ON apply_attempts (job_id)",
+]
+
+# Columns added after the first release. Applied by `init()` when missing, so an
+# existing database upgrades in place without a migration tool.
+COLUMN_MIGRATIONS = [
+    ("jobs", "apply_url", "TEXT"),
 ]
 
 # Pipeline stages, in the order they appear in the UI.
@@ -128,6 +182,10 @@ def init() -> None:
     with conn:
         for statement in SCHEMA_STATEMENTS:
             conn.execute(statement)
+        for table, column, column_type in COLUMN_MIGRATIONS:
+            existing = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+            if column not in existing:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}")
 
 
 def query(sql: str, params: Iterable[Any] = ()) -> list[sqlite3.Row]:
@@ -221,3 +279,25 @@ def add_event(application_id: int, kind: str, detail: str = "") -> None:
         """,
         (application_id, kind, detail, now()),
     )
+
+
+def set_application_status(application_id: int, status: str, detail: str = "") -> dict[str, Any]:
+    """Move an application to `status`, stamping `applied_at` the first time it lands
+    on 'applied' and logging the transition. Shared by the UI and the agent so both
+    produce the same event history."""
+    row = query_one("SELECT * FROM applications WHERE id = ?", (application_id,))
+    if row is None:
+        raise KeyError(f"No application with id {application_id}")
+    if status not in STATUSES:
+        raise ValueError(f"status must be one of: {', '.join(STATUSES)}")
+
+    if status != row["status"]:
+        add_event(application_id, "status", detail or f"{row['status']} -> {status}")
+    applied_at = row["applied_at"]
+    if status == "applied" and not applied_at:
+        applied_at = now()
+    execute(
+        "UPDATE applications SET status = ?, applied_at = ?, updated_at = ? WHERE id = ?",
+        (status, applied_at, now(), application_id),
+    )
+    return dict(query_one("SELECT * FROM applications WHERE id = ?", (application_id,)))
