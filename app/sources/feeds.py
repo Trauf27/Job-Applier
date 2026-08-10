@@ -23,6 +23,8 @@ from .base import RawJob, SourceError, html_to_text, looks_remote, normalize_tim
 
 REMOTIVE_URL = "https://remotive.com/api/remote-jobs"
 ARBEITNOW_URL = "https://www.arbeitnow.com/api/job-board-api"
+JOBICY_URL = "https://jobicy.com/api/v2/remote-jobs"
+REMOTEOK_URL = "https://remoteok.com/api"
 
 # How many postings a single query may contribute, so one noisy feed can't
 # swamp the job list.
@@ -108,9 +110,78 @@ def fetch_arbeitnow(query: str = "", *, limit: int = PER_QUERY_LIMIT) -> list[Ra
     return [job for job in jobs if job.source_job_id and job.url]
 
 
+def fetch_jobicy(query: str = "", *, limit: int = PER_QUERY_LIMIT) -> list[RawJob]:
+    params = {"count": limit}
+    if query:
+        params["tag"] = query  # Jobicy's keyword filter
+    payload = _get_json(JOBICY_URL, params)
+    if not isinstance(payload, dict):
+        raise SourceError("Jobicy returned an unexpected payload")
+
+    jobs = []
+    for item in payload.get("jobs", [])[:limit]:
+        location = (item.get("jobGeo") or "").strip()
+        title = (item.get("jobTitle") or "").strip()
+        description = html_to_text(item.get("jobDescription") or item.get("jobExcerpt"))
+        jobs.append(
+            RawJob(
+                source="jobicy",
+                source_job_id=str(item.get("id") or item.get("url", "")),
+                company=(item.get("companyName") or "").strip() or "Unknown company",
+                title=title or "Untitled role",
+                url=item.get("url") or "",
+                location=location,
+                remote=True,  # Jobicy lists remote roles only.
+                description=description,
+                posted_at=normalize_timestamp(item.get("pubDate")),
+                extra={"apply_url": item.get("url") or ""},
+            )
+        )
+    return [job for job in jobs if job.source_job_id and job.url]
+
+
+def fetch_remoteok(query: str = "", *, limit: int = PER_QUERY_LIMIT) -> list[RawJob]:
+    """RemoteOK returns a JSON array whose first element is a legal/metadata
+    notice, not a job — so it's skipped. There's no search parameter, so the
+    query is applied locally against the title and tags."""
+    payload = _get_json(REMOTEOK_URL)
+    if not isinstance(payload, list):
+        raise SourceError("RemoteOK returned an unexpected payload")
+
+    terms = [t for t in (query or "").lower().split() if len(t) > 2]
+    jobs = []
+    for item in payload:
+        if not isinstance(item, dict) or not item.get("id"):
+            continue  # the leading legal notice has no id
+        title = (item.get("position") or "").strip()
+        tags = " ".join(item.get("tags") or []).lower()
+        haystack = f"{title} {tags}".lower()
+        if terms and not any(term in haystack for term in terms):
+            continue
+        jobs.append(
+            RawJob(
+                source="remoteok",
+                source_job_id=str(item.get("id")),
+                company=(item.get("company") or "").strip() or "Unknown company",
+                title=title or "Untitled role",
+                url=item.get("url") or "",
+                location=(item.get("location") or "").strip(),
+                remote=True,  # RemoteOK lists remote roles only.
+                description=html_to_text(item.get("description")),
+                posted_at=normalize_timestamp(item.get("date") or item.get("epoch")),
+                extra={"apply_url": item.get("apply_url") or item.get("url") or ""},
+            )
+        )
+        if len(jobs) >= limit:
+            break
+    return [job for job in jobs if job.source_job_id and job.url]
+
+
 FEEDS = {
     "remotive": fetch_remotive,
     "arbeitnow": fetch_arbeitnow,
+    "jobicy": fetch_jobicy,
+    "remoteok": fetch_remoteok,
 }
 
 FEED_CHOICES = sorted(FEEDS)

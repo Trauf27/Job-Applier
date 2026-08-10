@@ -29,6 +29,9 @@ def test_status_and_empty_state(client):
     body = client.get("/api/status").json()
     assert body["profile_ready"] is False
     assert "greenhouse" in body["ats_choices"]
+    # The widened ATS coverage and the LLM provider are advertised in status.
+    assert {"workable", "smartrecruiters", "recruitee"} <= set(body["ats_choices"])
+    assert body["llm"]["provider"] in ("anthropic", "gemini")
     assert client.get("/api/jobs").json() == []
 
 

@@ -21,6 +21,14 @@ PATTERNS = [
     # https://jobs.ashbyhq.com/acme/uuid
     (re.compile(r"jobs\.ashbyhq\.com/([^/?#]+)", re.I), "ashby"),
     (re.compile(r"api\.ashbyhq\.com/posting-api/job-board/([^/?#]+)", re.I), "ashby"),
+    # https://apply.workable.com/acme/  |  https://acme.workable.com/
+    (re.compile(r"apply\.workable\.com/([^/?#]+)", re.I), "workable"),
+    (re.compile(r"([a-z0-9-]+)\.workable\.com", re.I), "workable"),
+    # https://jobs.smartrecruiters.com/Acme  |  https://careers.smartrecruiters.com/Acme
+    (re.compile(r"(?:jobs|careers)\.smartrecruiters\.com/([^/?#]+)", re.I), "smartrecruiters"),
+    (re.compile(r"api\.smartrecruiters\.com/v1/companies/([^/?#]+)", re.I), "smartrecruiters"),
+    # https://acme.recruitee.com/
+    (re.compile(r"([a-z0-9-]+)\.recruitee\.com", re.I), "recruitee"),
 ]
 
 
@@ -36,8 +44,10 @@ def detect_from_url(url: str) -> dict[str, str] | None:
         match = pattern.search(url)
         if match:
             slug = match.group(1).strip("/")
-            # Guard against matching a path segment that is really a route.
-            if slug.lower() in {"jobs", "embed", "v1", "v0", "boards"}:
+            # Guard against matching a subdomain or path segment that is really a
+            # route ("apply.workable.com" -> "apply", not a company).
+            if slug.lower() in {"jobs", "careers", "apply", "embed", "www", "api",
+                                "v1", "v0", "boards"}:
                 continue
             return {"ats": ats, "slug": slug, "name": slug.replace("-", " ").title()}
 

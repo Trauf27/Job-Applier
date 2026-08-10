@@ -36,9 +36,18 @@ DOCS_DIR = DATA_DIR / "documents"
 HOST = os.environ.get("JOB_APPLIER_HOST", "127.0.0.1")
 PORT = int(os.environ.get("JOB_APPLIER_PORT", "8765"))
 
+# Which LLM backend to use. Empty = auto-detect: Anthropic if its key/login is
+# present, otherwise Gemini if GEMINI_API_KEY is set. Set explicitly to
+# "anthropic" or "gemini" to force one.
+LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "").strip().lower()
+
 # Anthropic
 ANTHROPIC_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-opus-5")
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
+
+# Google Gemini — a free tier is available at https://aistudio.google.com/apikey
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "") or os.environ.get("GOOGLE_API_KEY", "")
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
 
 # Browser used to fill application forms. Playwright normally manages its own
 # Chromium; point this at an existing binary when Playwright's pinned build

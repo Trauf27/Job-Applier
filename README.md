@@ -1,24 +1,34 @@
 # Job Applier
 
 An agentic job search that runs on your machine. It scans for openings, scores them
-against your profile, asks Claude whether each one is genuinely worth your time, tailors a
-resume and cover letter for the ones that are, fills in the application form, and tracks
-every application through to an offer — on a schedule, without you.
+against your profile, asks an AI model (Claude or Gemini) whether each one is genuinely
+worth your time, tailors a resume and cover letter for the ones that are, fills in the
+application form, and tracks every application through to an offer — on a schedule, without
+you.
 
 You decide how far down that chain it's allowed to go. Out of the box it goes as far as
 "planned it and wrote nothing".
 
 Everything is local. Your resume, your profile, and your pipeline live in a SQLite file in
-`data/` — nothing leaves the machine except the job description and profile you send to
-Claude, and whatever you type into an employer's form.
+`data/` — nothing leaves the machine except the job description and profile you send to the
+AI model, and whatever you type into an employer's form.
 
 ## Quick start
 
 ```bash
 pip install -r requirements.txt
-cp .env.example .env          # add your ANTHROPIC_API_KEY
+cp .env.example .env          # add ONE api key: Anthropic or Gemini (see below)
 python -m app                 # opens http://127.0.0.1:8765
 ```
+
+**The AI features need a key, and you have a free option.** Set either:
+
+- `ANTHROPIC_API_KEY` — Claude (console.anthropic.com), or
+- `GEMINI_API_KEY` — Google Gemini, which has a **genuinely free tier**, no credit card
+  (get one at aistudio.google.com/apikey).
+
+The app auto-detects whichever you set. Everything except tailoring, fit review, and
+interview prep works with no key at all.
 
 Fill in your profile, add a few company boards, then open the **Agent** tab and press
 **Run now**. The first run is a dry run: it costs nothing and shows you exactly which jobs
@@ -38,8 +48,9 @@ boards     local score      Claude's     resume +     fill the    nudge the
 + feeds    ≥ threshold      fit call     letter       form        quiet ones
 ```
 
-**1. Scan.** Company ATS boards (Greenhouse, Lever, Ashby) plus open job feeds, on an
-interval you set. See [Where jobs come from](#where-jobs-come-from) — including LinkedIn.
+**1. Scan.** Company career-page boards (six ATS platforms) plus open job feeds, on an
+interval you set. See [Where jobs come from](#where-jobs-come-from) — plus paste-in support
+for Google Jobs, Rozee.pk, LinkedIn, and anything else.
 
 **2. Shortlist.** Every posting is scored 0-100 locally, with no API calls and no cost:
 
@@ -101,28 +112,42 @@ authorized to work in the US?" is worse than a blank one, and these are yours to
 
 ## Where jobs come from
 
-**Company boards** — Greenhouse, Lever, and Ashby, via each company's own public JSON
-endpoint. No key, no scraping, full descriptions. Paste any job URL from a company and the
-board is detected automatically.
+**Company career pages** — via each company's own public JSON board: **Greenhouse, Lever,
+Ashby, Workable, SmartRecruiters, Recruitee**. No key, no scraping, full descriptions.
+Between them these power a large share of company career pages worldwide, including many
+outside the US. Paste any job URL from a company and the board is detected automatically.
 
-**Open feeds** — [Remotive](https://remotive.com) and [Arbeitnow](https://www.arbeitnow.com)
-publish free, documented, key-less APIs meant for exactly this. They're queried with your
-target titles, and they're how the agent discovers companies you never thought to add.
-Their terms ask you not to hammer them, hence the 6-hour default interval.
+**Open feeds** — [Remotive](https://remotive.com), [Arbeitnow](https://www.arbeitnow.com),
+[Jobicy](https://jobicy.com), and [RemoteOK](https://remoteok.com) publish free,
+documented, key-less APIs meant for exactly this. They're queried with your target titles,
+and they're how the agent discovers companies you never thought to add. Their terms ask you
+not to hammer them, hence the 6-hour default interval.
+
+**Paste anything else** — Google Jobs, [Rozee.pk](https://rozee.pk), Mustakbil, a company
+page, an email, a WhatsApp message. These have no clean public API and scraping them is
+fragile and often against their terms, so instead you paste the posting into the
+**Paste any job** box on the Companies tab. The reliable form is a few label lines then the
+description:
+
+```
+Title: Senior Backend Engineer
+Company: Systems Ltd
+Location: Lahore, Pakistan
+URL: https://www.rozee.pk/job/12345
+
+Full job description here…
+```
+
+Separate several with a line of `---`. A rough copy-paste with no labels also works
+best-effort (first line = title, second = company). Nothing is fetched; what you paste is
+what gets scored and tailored.
 
 **LinkedIn** — imported, never fetched. LinkedIn's User Agreement forbids automated access
 and their anti-bot layer will lock an account that tries, so this app does not talk to
-linkedin.com at all. Instead, paste content you already have into the importer on the
-Companies tab:
-
-- a **job alert email** — forward it, save it, or select all and paste
-- a **search results page** you've opened yourself and copied
-- **job URLs**, one per line, optionally as `url | Title | Company | Location`
-
-All three are parsed locally. LinkedIn postings rarely carry a description in any of those
-forms, so imported jobs score on title, company, and location alone. Where the company runs
-its own Greenhouse/Lever/Ashby board, add that instead — the agent can poll it properly and
-gets the full description.
+linkedin.com at all. Use the dedicated LinkedIn importer on the Companies tab: paste a
+**job alert email**, a copied **search results page**, or **job URLs** one per line
+(optionally `url | Title | Company | Location`). Where the company runs its own board, add
+that instead — the agent can poll it properly and gets the full description.
 
 ## How applying works
 
@@ -184,9 +209,9 @@ app/
   db.py           SQLite schema, migrations, and helpers
   matching.py     Local 0-100 scoring — no API calls
   documents.py    Generated-document storage (DB + disk)
-  sources/        Greenhouse / Lever / Ashby boards, open feeds, LinkedIn import
+  sources/        Company boards (6 ATS), open feeds (4), LinkedIn + paste importers
   pipeline.py     Sync, ingest, and scoring orchestration
-  llm.py          Anthropic Messages API wrapper
+  llm.py          LLM access — Anthropic and Gemini behind one interface
   tailor.py       Resume, cover letter, fit review, resume import
   prep.py         Interview prep and first-90-days plans
   apply/
@@ -199,15 +224,18 @@ app/
     scheduler.py  Interval scheduling in a background thread
   server.py       FastAPI JSON API + UI
   static/         Single-page UI (no build step)
-tests/            151 tests
+tests/            177 tests
 ```
 
 ## Configuration
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `ANTHROPIC_API_KEY` | — | Enables review, tailoring, and prep |
-| `ANTHROPIC_MODEL` | `claude-opus-5` | Model used for generation |
+| `ANTHROPIC_API_KEY` | — | Use Claude for review, tailoring, and prep |
+| `GEMINI_API_KEY` | — | Use Google Gemini instead (free tier available) |
+| `LLM_PROVIDER` | auto | Force `anthropic` or `gemini` when both keys are set |
+| `ANTHROPIC_MODEL` | `claude-opus-5` | Claude model used for generation |
+| `GEMINI_MODEL` | `gemini-2.0-flash` | Gemini model used for generation |
 | `JOB_APPLIER_DATA` | `./data` | Where the database and documents live |
 | `JOB_APPLIER_PORT` | `8765` | Server port |
 | `JOB_APPLIER_BROWSER_PATH` | — | Chromium binary, if Playwright's own isn't usable |
@@ -215,7 +243,7 @@ tests/            151 tests
 Generated documents land in `data/documents/` as Markdown, as uploadable PDFs, and as form
 screenshots.
 
-Without an API key the agent still runs: it scans, scores, and saves what matches, then
+Without any API key the agent still runs: it scans, scores, and saves what matches, then
 tells you that review and tailoring need credentials.
 
 ## Tests

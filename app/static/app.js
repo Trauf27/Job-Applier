@@ -120,12 +120,13 @@ async function withBusy(button, fn) {
 async function loadStatus() {
   state.status = await api("/api/status");
   const pill = document.getElementById("llm-status");
-  const { available, model } = state.status.llm;
-  pill.textContent = available ? `Claude ready · ${model}` : "No API key — generation off";
+  const { available, model, provider } = state.status.llm;
+  const providerName = provider === "gemini" ? "Gemini" : "Claude";
+  pill.textContent = available ? `${providerName} ready · ${model}` : "No API key — generation off";
   pill.className = `pill ${available ? "pill-good" : "pill-muted"}`;
   pill.title = available
-    ? "Resume tailoring, fit review, and interview prep are enabled."
-    : "Set ANTHROPIC_API_KEY in your .env file to enable resume tailoring and interview prep.";
+    ? `Resume tailoring, fit review, and interview prep are enabled (via ${providerName}).`
+    : "Set ANTHROPIC_API_KEY, or GEMINI_API_KEY for Google's free tier, in your .env file to enable generation.";
 
   const counts = state.status.counts || {};
   document.getElementById("count-jobs").textContent = counts.jobs ?? "";
@@ -714,6 +715,23 @@ document.getElementById("linkedin-import-btn").addEventListener("click", async (
     if (parsed.missing_title) gaps.push(`${parsed.missing_title} without a title`);
     toast(result.message + (gaps.length ? ` · ${gaps.join(", ")} — edit or hide those.` : ""));
     document.getElementById("linkedin-paste").value = "";
+    await Promise.all([loadJobs(), loadStatus()]);
+  } catch (error) {
+    toast(error.message, true);
+  }
+});
+
+document.getElementById("paste-import-btn").addEventListener("click", async (event) => {
+  const text = document.getElementById("paste-job").value;
+  try {
+    const result = await withBusy(event.currentTarget, () =>
+      api("/api/jobs/import", { method: "POST", body: { text } }));
+    const parsed = result.parsed || {};
+    const notes = [];
+    if (parsed.missing_company) notes.push(`${parsed.missing_company} without a company`);
+    if (!parsed.with_description) notes.push("no description — tailoring will be thin");
+    toast(result.message + (notes.length ? ` · ${notes.join(", ")}` : ""));
+    document.getElementById("paste-job").value = "";
     await Promise.all([loadJobs(), loadStatus()]);
   } catch (error) {
     toast(error.message, true);

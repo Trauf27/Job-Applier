@@ -159,6 +159,24 @@
           board, add it above instead — the agent can poll that properly.</p>
       </div>
 
+      <div class="panel">
+        <h2>Paste any job</h2>
+        <p class="hint">From <strong>Google Jobs</strong>, <strong>Rozee.pk</strong>,
+          <strong>Mustakbil</strong>, a company page, or an email — anything without a public API.
+          Nothing is fetched; what you paste is what gets scored and tailored.</p>
+        <p class="hint">Most reliable is a few label lines then the description. Separate several
+          jobs with a line of <code>---</code>:</p>
+        <pre class="example">Title: Senior Backend Engineer
+Company: Systems Ltd
+Location: Lahore, Pakistan
+URL: https://www.rozee.pk/job/12345
+
+Full job description pasted here…</pre>
+        <textarea id="paste-job" rows="7"
+          placeholder="Title: …&#10;Company: …&#10;Location: …&#10;URL: …&#10;&#10;Description…"></textarea>
+        <button id="paste-import-btn" class="btn btn-primary">Import job</button>
+      </div>
+
       <div id="companies-list" class="list"></div>
     </section>
 

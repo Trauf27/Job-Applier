@@ -146,3 +146,6 @@ def test_missing_credentials_raise_actionable_error(monkeypatch):
     monkeypatch.setattr(llm, "_client", None)
     with pytest.raises(llm.LLMError, match="ANTHROPIC_API_KEY"):
         llm.complete("system", "prompt")
+    # The same error names the free Gemini path, so a keyless user knows both options.
+    with pytest.raises(llm.LLMError, match="GEMINI_API_KEY"):
+        llm.complete("system", "prompt")

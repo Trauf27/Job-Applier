@@ -14,6 +14,8 @@ dependencies = [
 # Only needed to fill application forms. Everything else works without it.
 # After installing: playwright install chromium
 autofill = ["playwright>=1.40"]
+# Use Google Gemini (free tier) instead of Anthropic for generation.
+gemini = ["google-genai>=1.0"]
 
 [project.scripts]
 job-applier = "app.__main__:main"

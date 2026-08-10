@@ -176,7 +176,9 @@ def detect_company(payload: dict[str, Any] = Body(...)) -> dict[str, str]:
         raise HTTPException(
             400,
             "Could not read a board from that URL. Supported hosts: "
-            "boards.greenhouse.io, job-boards.greenhouse.io, jobs.lever.co, jobs.ashbyhq.com",
+            "greenhouse.io, jobs.lever.co, jobs.ashbyhq.com, workable.com, "
+            "smartrecruiters.com, recruitee.com. For anything else, use the "
+            "'Paste any job' box below.",
         )
     return detected
 
@@ -230,6 +232,35 @@ def import_linkedin(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
     return {
         **result,
         "parsed": sources.linkedin.describe(raw_jobs),
+        "message": f"Imported {result['added']} new and refreshed {result['updated']} posting(s).",
+    }
+
+
+@app.post("/api/jobs/import")
+def import_pasted_jobs(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    """Import a job pasted from anywhere — Google Jobs, Rozee.pk, a company page,
+    an email. Nothing is fetched; see `sources/paste.py` for the accepted shapes.
+    """
+    text = (payload.get("text") or "").strip()
+    if len(text) < 10:
+        raise HTTPException(
+            400,
+            "Paste a job posting. The reliable form is a few 'Label: value' lines "
+            "(Title, Company, Location, URL) then the description.",
+        )
+
+    raw_jobs = sources.paste.parse(text)
+    if not raw_jobs:
+        raise HTTPException(
+            400,
+            "Couldn't find a title or company in that. Add a couple of label lines — "
+            "'Title: ...' and 'Company: ...' — and try again.",
+        )
+
+    result = pipeline.ingest(raw_jobs)
+    return {
+        **result,
+        "parsed": sources.paste.describe(raw_jobs),
         "message": f"Imported {result['added']} new and refreshed {result['updated']} posting(s).",
     }
 

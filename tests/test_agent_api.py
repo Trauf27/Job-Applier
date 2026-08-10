@@ -155,6 +155,33 @@ def test_feed_sync_rejects_unknown_feeds(client):
     assert "linkedin" in response.json()["detail"]
 
 
+# --- paste-any-job import -----------------------------------------------------
+
+
+def test_paste_import_creates_a_scored_job(client):
+    client.put("/api/profile", json=PROFILE)
+    body = client.post("/api/jobs/import", json={"text": (
+        "Title: Backend Engineer\nCompany: Systems Ltd\nLocation: Lahore, Pakistan\n"
+        "URL: https://www.rozee.pk/job/999\n\nBuild Python services."
+    )}).json()
+    assert body["added"] == 1
+    assert body["parsed"]["with_url"] == 1
+
+    jobs = client.get("/api/jobs").json()
+    assert jobs[0]["company"] == "Systems Ltd"
+    assert jobs[0]["score"] is not None
+
+
+def test_paste_import_rejects_structureless_text(client):
+    response = client.post("/api/jobs/import", json={"text": "hello there, any jobs?"})
+    assert response.status_code == 400
+    assert "Title" in response.json()["detail"]
+
+
+def test_paste_import_rejects_empty(client):
+    assert client.post("/api/jobs/import", json={"text": ""}).status_code == 400
+
+
 # --- applying -----------------------------------------------------------------
 
 

@@ -220,6 +220,12 @@ label input, label textarea, label select { margin-top: .25rem; font-weight: 400
 .md code { background: var(--border); padding: .05rem .3rem; border-radius: 4px; font-size: .85em; }
 .md hr { border: 0; border-top: 1px solid var(--border); margin: .8rem 0; }
 
+pre.example {
+  background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: .6rem .75rem; font-size: .8rem; overflow-x: auto; margin: .4rem 0 .6rem;
+  color: var(--muted); white-space: pre;
+}
+
 /* --- agent --- */
 .agent-head {
   display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem;

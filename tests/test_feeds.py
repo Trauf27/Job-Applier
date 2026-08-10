@@ -46,6 +46,41 @@ ARBEITNOW_PAYLOAD = {
 }
 
 
+JOBICY_PAYLOAD = {
+    "jobs": [{
+        "id": 555,
+        "jobTitle": "Senior Backend Engineer",
+        "companyName": "Acme",
+        "jobGeo": "Anywhere",
+        "url": "https://jobicy.com/jobs/555-senior-backend-engineer",
+        "jobDescription": "<p>Python and PostgreSQL.</p>",
+        "pubDate": "2026-08-05 09:00:00",
+    }]
+}
+
+REMOTEOK_PAYLOAD = [
+    {"legal": "See https://remoteok.com/api for terms"},  # leading notice, not a job
+    {
+        "id": "778899",
+        "position": "Backend Engineer",
+        "company": "Globex",
+        "location": "Worldwide",
+        "tags": ["python", "postgres"],
+        "description": "<p>Build APIs.</p>",
+        "url": "https://remoteok.com/remote-jobs/778899",
+        "date": "2026-08-06T00:00:00+00:00",
+    },
+    {
+        "id": "112233",
+        "position": "Marketing Manager",
+        "company": "Initech",
+        "tags": ["marketing"],
+        "url": "https://remoteok.com/remote-jobs/112233",
+        "description": "",
+    },
+]
+
+
 @pytest.fixture()
 def stub_http(monkeypatch):
     """Replace the network with a canned payload and record the calls made."""
@@ -53,7 +88,13 @@ def stub_http(monkeypatch):
 
     def fake_get_json(url, params=None):
         calls.append((url, params))
-        return REMOTIVE_PAYLOAD if "remotive" in url else ARBEITNOW_PAYLOAD
+        if "remotive" in url:
+            return REMOTIVE_PAYLOAD
+        if "jobicy" in url:
+            return JOBICY_PAYLOAD
+        if "remoteok" in url:
+            return REMOTEOK_PAYLOAD
+        return ARBEITNOW_PAYLOAD
 
     monkeypatch.setattr(feeds, "_get_json", fake_get_json)
     return calls
@@ -113,6 +154,33 @@ def test_search_survives_a_partial_failure(monkeypatch):
 
     monkeypatch.setattr(feeds, "_get_json", flaky)
     assert len(feeds.search("remotive", ["a", "b"])) == 1
+
+
+def test_jobicy_maps_fields(stub_http):
+    jobs = feeds.fetch("jobicy", "backend")
+    assert len(jobs) == 1
+    job = jobs[0]
+    assert job.source == "jobicy" and job.source_job_id == "555"
+    assert job.remote is True
+    assert "PostgreSQL" in job.description and "<" not in job.description
+    # The query is passed as Jobicy's keyword tag.
+    assert stub_http[0][1]["tag"] == "backend"
+
+
+def test_remoteok_skips_the_legal_notice_and_filters(stub_http):
+    jobs = feeds.fetch("remoteok", "python")
+    # The leading notice is dropped; only the Python role matches the query.
+    assert [job.title for job in jobs] == ["Backend Engineer"]
+    assert jobs[0].source_job_id == "778899"
+    assert jobs[0].remote is True
+
+
+def test_remoteok_without_a_query_returns_all_real_jobs(stub_http):
+    assert len(feeds.fetch("remoteok", "")) == 2
+
+
+def test_all_feeds_are_registered():
+    assert set(feeds.FEED_CHOICES) == {"remotive", "arbeitnow", "jobicy", "remoteok"}
 
 
 def test_unknown_feed_is_rejected():
