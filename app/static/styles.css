@@ -220,6 +220,50 @@ label input, label textarea, label select { margin-top: .25rem; font-weight: 400
 .md code { background: var(--border); padding: .05rem .3rem; border-radius: 4px; font-size: .85em; }
 .md hr { border: 0; border-top: 1px solid var(--border); margin: .8rem 0; }
 
+/* --- agent --- */
+.agent-head {
+  display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem;
+  flex-wrap: wrap;
+}
+.agent-head h2 { margin-bottom: .25rem; }
+
+.chip-check {
+  display: inline-flex; align-items: center; gap: .35rem;
+  border: 1px solid var(--border); border-radius: 999px;
+  padding: .2rem .65rem; font-size: .82rem; background: var(--bg); cursor: pointer;
+}
+.chip-check input { width: auto; margin: 0; }
+
+/* The autonomy ladder: each rung is a bigger commitment than the one above it. */
+.ladder { display: flex; flex-direction: column; gap: .55rem; margin: .5rem 0 .75rem; }
+.ladder .checkbox-block {
+  align-items: flex-start; padding: .6rem .75rem; gap: .6rem;
+  border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg);
+  font-size: .87rem; font-weight: 400;
+}
+.ladder .checkbox-block span { flex: 1; }
+.ladder .checkbox-block input { margin-top: .15rem; }
+.ladder .checkbox-block.danger { border-color: var(--bad); }
+.ladder input:disabled + span { opacity: .5; }
+
+.run {
+  border: 1px solid var(--border); border-radius: var(--radius);
+  padding: .75rem; margin-bottom: .6rem; background: var(--surface);
+}
+.run-head { display: flex; justify-content: space-between; align-items: center; gap: .5rem; }
+.run-head > div:first-child { display: flex; align-items: center; gap: .4rem; flex-wrap: wrap; }
+.run .hint.error { color: var(--bad); }
+.run-actions { margin-top: .6rem; border-top: 1px solid var(--border); padding-top: .6rem; }
+.run-action { display: flex; gap: .5rem; align-items: flex-start; padding: .3rem 0; }
+.run-action .pill { flex: 0 0 auto; }
+
+.attempt {
+  border: 1px solid var(--border); border-radius: var(--radius);
+  padding: .7rem; margin-top: .5rem; background: var(--bg); font-size: .87rem;
+}
+.attempt summary { cursor: pointer; font-size: .82rem; color: var(--muted); margin-top: .4rem; }
+.attempt .reasons { font-size: .82rem; }
+
 /* --- misc --- */
 .toast {
   position: fixed; bottom: 1.25rem; left: 50%; transform: translateX(-50%);

@@ -1,13 +1,19 @@
 """Job sources.
 
-Each source knows how to turn a company's public ATS board slug into a list of
-`RawJob` records. All three supported boards expose free, key-less JSON APIs.
+Three kinds, in descending order of how well a machine can be trusted with them:
+
+* **Company boards** (`greenhouse`, `lever`, `ashby`) — a company's own public
+  JSON board. Full descriptions, no key, polite to poll.
+* **Open feeds** (`feeds`) — free public search APIs the agent may poll on a
+  schedule to *discover* companies you never listed.
+* **LinkedIn** (`linkedin`) — never fetched; parsed out of alert emails, saved
+  pages, or URLs you paste, because automated access breaks their terms.
 """
 
 from __future__ import annotations
 
 from .base import RawJob, SourceError, html_to_text
-from . import ashby, greenhouse, lever
+from . import ashby, feeds, greenhouse, lever, linkedin
 
 FETCHERS = {
     "greenhouse": greenhouse.fetch,
@@ -16,6 +22,7 @@ FETCHERS = {
 }
 
 ATS_CHOICES = sorted(FETCHERS)
+FEED_CHOICES = feeds.FEED_CHOICES
 
 
 def fetch(ats: str, slug: str) -> list[RawJob]:
@@ -26,4 +33,7 @@ def fetch(ats: str, slug: str) -> list[RawJob]:
     return fetcher(slug)
 
 
-__all__ = ["FETCHERS", "ATS_CHOICES", "RawJob", "SourceError", "fetch", "html_to_text"]
+__all__ = [
+    "FETCHERS", "ATS_CHOICES", "FEED_CHOICES", "RawJob", "SourceError",
+    "fetch", "feeds", "html_to_text", "linkedin",
+]

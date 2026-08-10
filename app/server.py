@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-import re
+import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Literal
@@ -12,7 +12,8 @@ from fastapi import Body, FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import config, db, llm, pipeline, prep, sources, tailor
+from . import agent, config, db, documents, llm, pipeline, prep, sources, tailor
+from . import apply as apply_mod
 
 STATIC_DIR = Path(__file__).parent / "static"
 
@@ -20,7 +21,14 @@ STATIC_DIR = Path(__file__).parent / "static"
 async def lifespan(_: FastAPI):
     config.ensure_dirs()
     db.init()
-    yield
+    # The scheduler decides for itself whether the agent is enabled, so starting
+    # it unconditionally is safe and means toggling the switch in the UI takes
+    # effect without a restart.
+    agent.scheduler.start_in_background()
+    try:
+        yield
+    finally:
+        agent.scheduler.stop()
 
 
 app = FastAPI(title="Job Applier", version="0.1.0", lifespan=lifespan)
@@ -46,40 +54,7 @@ def _profile_or_400() -> dict[str, Any]:
     return profile
 
 
-def _slugify(value: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "-", (value or "").lower()).strip("-")[:60] or "untitled"
 
-
-def _save_document(job: dict[str, Any], kind: str, content: str) -> dict[str, Any]:
-    cursor = db.execute(
-        "INSERT INTO documents (job_id, kind, content, created_at) VALUES (?, ?, ?, ?)",
-        (job["id"], kind, content, db.now()),
-    )
-    doc_id = int(cursor.lastrowid)
-
-    filename = f"{_slugify(job['company'])}-{_slugify(job['title'])}-{kind}-{doc_id}.md"
-    path = config.DOCS_DIR / filename
-    path.write_text(content, encoding="utf-8")
-
-    application = db.query_one("SELECT id FROM applications WHERE job_id = ?", (job["id"],))
-    if application:
-        db.add_event(application["id"], "document", f"Generated {kind.replace('_', ' ')}")
-
-    return {"id": doc_id, "job_id": job["id"], "kind": kind, "content": content,
-            "created_at": db.now(), "file": str(path)}
-
-
-def _review_to_markdown(review: dict[str, Any]) -> str:
-    def bullets(items: list[str]) -> str:
-        return "\n".join(f"- {item}" for item in items) or "- (none)"
-
-    return (
-        f"# Fit review — {review.get('verdict', 'unknown')} ({review.get('score', '?')}/100)\n\n"
-        f"## Strengths\n{bullets(review.get('strengths', []))}\n\n"
-        f"## Gaps\n{bullets(review.get('gaps', []))}\n\n"
-        f"## Talking points\n{bullets(review.get('talking_points', []))}\n\n"
-        f"## Resume advice\n{review.get('resume_advice', '')}\n"
-    )
 
 
 # --- status ------------------------------------------------------------------
@@ -101,6 +76,9 @@ def get_status() -> dict[str, Any]:
         "profile_ready": bool(profile.get("name") or profile.get("experience")),
         "statuses": db.STATUSES,
         "ats_choices": sources.ATS_CHOICES,
+        "feed_choices": sources.FEED_CHOICES,
+        "agent": agent.scheduler.status(),
+        "autofill_available": apply_mod.browser.available(),
         "data_dir": str(config.DATA_DIR),
     }
 
@@ -216,6 +194,46 @@ def rescore() -> dict[str, Any]:
     return pipeline.rescore_all()
 
 
+@app.post("/api/feeds/sync")
+def sync_feeds(payload: dict[str, Any] = Body(default={})) -> dict[str, Any]:
+    feeds = payload.get("feeds") or agent.settings.get()["feeds"]
+    unknown = [f for f in feeds if f not in sources.FEED_CHOICES]
+    if unknown:
+        raise HTTPException(400, f"Unknown feed(s): {', '.join(unknown)}")
+    return pipeline.sync_feeds(feeds)
+
+
+# --- LinkedIn import ----------------------------------------------------------
+
+
+@app.post("/api/linkedin/import")
+def import_linkedin(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    """Ingest LinkedIn postings from content you supply.
+
+    LinkedIn is never fetched — paste a job alert email, a saved search page, or
+    a list of posting URLs and they're parsed here. See `sources/linkedin.py`
+    for why it works this way.
+    """
+    text = (payload.get("text") or "").strip()
+    if len(text) < 10:
+        raise HTTPException(400, "Paste a LinkedIn alert email, a saved search page, or job URLs.")
+
+    raw_jobs = sources.linkedin.parse(text)
+    if not raw_jobs:
+        raise HTTPException(
+            400,
+            "Nothing recognisable in there. Paste either a LinkedIn job-alert email, the "
+            "copied text of a search results page, or one job URL per line.",
+        )
+
+    result = pipeline.ingest(raw_jobs)
+    return {
+        **result,
+        "parsed": sources.linkedin.describe(raw_jobs),
+        "message": f"Imported {result['added']} new and refreshed {result['updated']} posting(s).",
+    }
+
+
 # --- jobs --------------------------------------------------------------------
 
 
@@ -315,18 +333,10 @@ def update_application(application_id: int, payload: dict[str, Any] = Body(...))
         raise HTTPException(404, "No such application")
 
     if "status" in payload:
-        status = payload["status"]
-        if status not in db.STATUSES:
-            raise HTTPException(400, f"status must be one of: {', '.join(db.STATUSES)}")
-        if status != row["status"]:
-            db.add_event(application_id, "status", f"{row['status']} -> {status}")
-        applied_at = row["applied_at"]
-        if status == "applied" and not applied_at:
-            applied_at = db.now()
-        db.execute(
-            "UPDATE applications SET status = ?, applied_at = ?, updated_at = ? WHERE id = ?",
-            (status, applied_at, db.now(), application_id),
-        )
+        try:
+            db.set_application_status(application_id, payload["status"])
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
 
     if "notes" in payload:
         db.execute(
@@ -370,7 +380,7 @@ def generate(job_id: int, kind: GeneratedKind) -> dict[str, Any]:
             content = tailor.cover_letter(profile, job)
         elif kind == "review":
             review = tailor.deep_review(profile, job)
-            content = _review_to_markdown(review)
+            content = documents.review_to_markdown(review)
         elif kind == "interview_prep":
             content = prep.interview_prep(profile, job)
         else:
@@ -379,7 +389,7 @@ def generate(job_id: int, kind: GeneratedKind) -> dict[str, Any]:
         raise HTTPException(503, str(exc)) from exc
 
     db.get_or_create_application(job_id)
-    document = _save_document(job, kind, content)
+    document = documents.save(job, kind, content)
     if kind == "review":
         document["review"] = review
     return document
@@ -405,7 +415,9 @@ def download_document(document_id: int) -> PlainTextResponse:
     )
     if row is None:
         raise HTTPException(404, "No such document")
-    filename = f"{_slugify(row['company'])}-{_slugify(row['title'])}-{row['kind']}.md"
+    filename = (
+        f"{config.slugify(row['company'])}-{config.slugify(row['title'])}-{row['kind']}.md"
+    )
     return PlainTextResponse(
         row["content"],
         media_type="text/markdown; charset=utf-8",
@@ -417,6 +429,125 @@ def download_document(document_id: int) -> PlainTextResponse:
 def delete_document(document_id: int) -> dict[str, Any]:
     db.execute("DELETE FROM documents WHERE id = ?", (document_id,))
     return {"deleted": document_id}
+
+
+# --- applying -----------------------------------------------------------------
+
+
+@app.get("/api/jobs/{job_id}/attempts")
+def list_attempts(job_id: int) -> list[dict[str, Any]]:
+    _job_or_404(job_id)
+    return apply_mod.attempts_for(job_id)
+
+
+@app.post("/api/jobs/{job_id}/apply")
+def apply_to_job(job_id: int, payload: dict[str, Any] = Body(default={})) -> dict[str, Any]:
+    """Fill this job's application form.
+
+    Stops at the submit button unless `submit` is explicitly true, and even then
+    refuses if anything required was left unanswered. Blocking, because it drives
+    a real browser — expect 20-60 seconds.
+    """
+    job = _job_or_404(job_id)
+    profile = _profile_or_400()
+
+    if payload.get("submit") and not payload.get("confirm"):
+        raise HTTPException(
+            400,
+            "Submitting on your behalf needs `confirm: true` as well as `submit: true`.",
+        )
+
+    settings = agent.settings.get()
+    return apply_mod.attempt(
+        job, profile,
+        auto_submit=bool(payload.get("submit")),
+        headless=bool(payload.get("headless", settings["headless"])),
+        dry_run=bool(payload.get("dry_run")),
+    )
+
+
+@app.get("/api/attempts/{attempt_id}/screenshot")
+def attempt_screenshot(attempt_id: int) -> FileResponse:
+    row = db.query_one("SELECT screenshot FROM apply_attempts WHERE id = ?", (attempt_id,))
+    if row is None or not row["screenshot"]:
+        raise HTTPException(404, "No screenshot for that attempt")
+    path = Path(row["screenshot"])
+    # Only ever serve out of the app's own documents directory.
+    if not path.is_file() or config.DOCS_DIR.resolve() not in path.resolve().parents:
+        raise HTTPException(404, "Screenshot file is gone")
+    return FileResponse(path, media_type="image/png")
+
+
+# --- the agent ----------------------------------------------------------------
+
+
+@app.get("/api/agent/settings")
+def get_agent_settings() -> dict[str, Any]:
+    settings = agent.settings.get()
+    return {
+        "settings": settings,
+        "summary": agent.settings.describe(settings),
+        "scheduler": agent.scheduler.status(),
+        "autofill_available": apply_mod.browser.available(),
+        "feed_choices": sources.FEED_CHOICES,
+    }
+
+
+@app.put("/api/agent/settings")
+def put_agent_settings(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    if payload.get("auto_submit") and not payload.get("confirm_auto_submit"):
+        raise HTTPException(
+            400,
+            "Turning on auto-submit means applications get sent without you seeing them. "
+            "Send `confirm_auto_submit: true` alongside it.",
+        )
+    agent.settings.save(payload)
+    return get_agent_settings()
+
+
+@app.post("/api/agent/run")
+def run_agent(payload: dict[str, Any] = Body(default={})) -> dict[str, Any]:
+    """Kick off one pass. Returns immediately; poll `/api/agent/runs` for progress."""
+    if agent.runner.is_running():
+        raise HTTPException(409, "A run is already in progress.")
+
+    overrides: dict[str, Any] = {}
+    if "dry_run" in payload:
+        overrides["dry_run"] = bool(payload["dry_run"])
+
+    started = threading.Event()
+
+    def work() -> None:
+        started.set()
+        try:
+            agent.runner.run_once(trigger="manual", overrides=overrides)
+        except Exception:  # noqa: BLE001 - already recorded on the run row
+            pass
+
+    threading.Thread(target=work, name="agent-manual-run", daemon=True).start()
+    started.wait(timeout=2)
+    return {"started": True, "dry_run": overrides.get("dry_run", agent.settings.get()["dry_run"])}
+
+
+@app.post("/api/agent/stop")
+def stop_agent() -> dict[str, Any]:
+    return {"stopping": agent.runner.request_stop()}
+
+
+@app.get("/api/agent/runs")
+def list_agent_runs(limit: int = Query(20, ge=1, le=100)) -> dict[str, Any]:
+    return {
+        "runs": agent.runner.recent_runs(limit),
+        "scheduler": agent.scheduler.status(),
+    }
+
+
+@app.get("/api/agent/runs/{run_id}")
+def get_agent_run(run_id: int) -> dict[str, Any]:
+    try:
+        return agent.runner.get_run(run_id)
+    except KeyError as exc:
+        raise HTTPException(404, str(exc)) from exc
 
 
 # --- UI ----------------------------------------------------------------------

@@ -236,6 +236,8 @@ async function refreshDrawer() {
         ${Math.round(job.score || 0)}/100</span>
     </div>`;
 
+  const hasResume = job.documents.some((doc) => doc.kind === "resume");
+
   const generators = [
     ["review", "Fit review"],
     ["resume", "Tailor resume"],
@@ -268,8 +270,24 @@ async function refreshDrawer() {
     <h4>Documents</h4>
     <div id="drawer-docs">${job.documents.length ? "" : `<p class="hint">Nothing generated yet.</p>`}</div>
 
+    <h4>Apply</h4>
+    ${hasResume
+      ? `<div class="row">
+           <button class="btn" id="drawer-fill">Fill the form for me</button>
+           <a class="btn btn-ghost" href="${escapeHtml(job.apply_url || job.url)}"
+              target="_blank" rel="noopener">Open the form ↗</a>
+         </div>
+         <p class="hint">Opens the application in a browser, fills what your profile answers,
+           uploads the tailored resume as a PDF, and stops at the submit button.
+           ${state.status?.autofill_available ? "" :
+             "Needs Playwright: <code>pip install playwright &amp;&amp; playwright install chromium</code>."}</p>`
+      : `<p class="hint">Generate a tailored resume first — that's what gets uploaded.</p>`}
+    <div id="drawer-attempts"></div>
+
     <h4>Job description</h4>
     <div class="jd">${escapeHtml(job.description || "(no description)")}</div>`;
+
+  renderAttempts(job.id);
 
   const docsContainer = document.getElementById("drawer-docs");
   for (const doc of job.documents) {
@@ -308,6 +326,17 @@ async function refreshDrawer() {
     });
   });
 
+  document.getElementById("drawer-fill")?.addEventListener("click", async (event) => {
+    try {
+      const attempt = await withBusy(event.currentTarget, () =>
+        api(`/api/jobs/${job.id}/apply`, { method: "POST", body: {} }));
+      toast(attempt.detail, attempt.status === "failed");
+      await Promise.all([refreshDrawer(), loadApplications(), loadStatus()]);
+    } catch (error) {
+      toast(error.message, true);
+    }
+  });
+
   document.querySelectorAll("[data-doc-toggle]").forEach((button) => {
     button.addEventListener("click", async () => {
       const id = button.dataset.docToggle;
@@ -322,6 +351,33 @@ async function refreshDrawer() {
       button.textContent = "Hide";
     });
   });
+}
+
+/** Past attempts at this job's form. The unfilled list is the point: it's the
+ *  checklist of what still needs a human before the form can be sent. */
+async function renderAttempts(jobId) {
+  const container = document.getElementById("drawer-attempts");
+  if (!container) return;
+  const attempts = await api(`/api/jobs/${jobId}/attempts`);
+  if (!attempts.length) { container.innerHTML = ""; return; }
+
+  container.innerHTML = attempts.map((attempt) => `
+    <div class="attempt">
+      <div class="doc-head">
+        <strong>${escapeHtml(attempt.status.replace(/_/g, " "))}</strong>
+        <span class="hint">${escapeHtml(attempt.method)} · ${relativeDate(attempt.created_at)}</span>
+      </div>
+      <div class="hint">${escapeHtml(attempt.detail)}</div>
+      ${attempt.filled.length ? `<details><summary>Filled ${attempt.filled.length}</summary>
+        <ul class="reasons">${attempt.filled.map((f) =>
+          `<li>${escapeHtml(f.label)} → ${escapeHtml(f.value)}</li>`).join("")}</ul></details>` : ""}
+      ${attempt.unfilled.length ? `<details open><summary>Left for you ${attempt.unfilled.length}</summary>
+        <ul class="reasons">${attempt.unfilled.map((f) =>
+          `<li>${f.required ? "<strong>required</strong> · " : ""}${escapeHtml(f.label)} —
+            ${escapeHtml(f.reason)}</li>`).join("")}</ul></details>` : ""}
+      ${attempt.screenshot ? `<a class="btn btn-sm" href="/api/attempts/${attempt.id}/screenshot"
+        target="_blank" rel="noopener">View the form ↗</a>` : ""}
+    </div>`).join("");
 }
 
 /* ---------------------------------------------------------------- pipeline */
@@ -645,6 +701,215 @@ document.getElementById("rescore-btn").addEventListener("click", async (event) =
   await loadJobs();
 });
 
+/* --------------------------------------------------------------- linkedin */
+
+document.getElementById("linkedin-import-btn").addEventListener("click", async (event) => {
+  const text = document.getElementById("linkedin-paste").value;
+  try {
+    const result = await withBusy(event.currentTarget, () =>
+      api("/api/linkedin/import", { method: "POST", body: { text } }));
+    const parsed = result.parsed || {};
+    const gaps = [];
+    if (parsed.missing_company) gaps.push(`${parsed.missing_company} without a company`);
+    if (parsed.missing_title) gaps.push(`${parsed.missing_title} without a title`);
+    toast(result.message + (gaps.length ? ` · ${gaps.join(", ")} — edit or hide those.` : ""));
+    document.getElementById("linkedin-paste").value = "";
+    await Promise.all([loadJobs(), loadStatus()]);
+  } catch (error) {
+    toast(error.message, true);
+  }
+});
+
+/* ------------------------------------------------------------------ agent */
+
+const AGENT_NUMBERS = ["interval_minutes", "min_score", "review_min_score",
+  "max_reviews_per_run", "max_documents_per_run", "max_applications_per_run",
+  "max_applications_per_day", "followup_days"];
+const AGENT_FLAGS = ["enabled", "sync_boards", "dry_run", "auto_apply", "auto_submit", "headless"];
+
+let agentPollTimer = null;
+
+async function loadAgent() {
+  const payload = await api("/api/agent/settings");
+  state.agent = payload;
+  const form = document.getElementById("agent-form");
+
+  AGENT_FLAGS.forEach((key) => { form.elements[key].checked = !!payload.settings[key]; });
+  AGENT_NUMBERS.forEach((key) => { form.elements[key].value = payload.settings[key]; });
+  form.elements.company_blocklist.value = listToLines(payload.settings.company_blocklist);
+
+  document.getElementById("agent-feeds").innerHTML = (payload.feed_choices || []).map((feed) => `
+    <label class="chip-check"><input type="checkbox" data-feed="${escapeHtml(feed)}"
+      ${payload.settings.feeds.includes(feed) ? "checked" : ""} /> ${escapeHtml(feed)}</label>`).join("");
+
+  document.getElementById("agent-summary").textContent = payload.summary;
+  document.getElementById("autofill-note").textContent = payload.autofill_available
+    ? ""
+    : "Needs Playwright: pip install playwright && playwright install chromium";
+  form.elements.auto_apply.disabled = !payload.autofill_available;
+
+  applyAgentFormRules();
+  renderAgentScheduler(payload.scheduler);
+  await loadAgentRuns();
+}
+
+/** The three levels of autonomy nest, so the UI enforces the nesting visibly. */
+function applyAgentFormRules() {
+  const form = document.getElementById("agent-form");
+  const dry = form.elements.dry_run.checked;
+  const autoApply = form.elements.auto_apply.checked;
+  form.elements.auto_apply.disabled = dry || !state.agent?.autofill_available;
+  form.elements.auto_submit.disabled = dry || !autoApply;
+  form.elements.headless.disabled = dry || !autoApply;
+  if (form.elements.auto_apply.disabled) form.elements.auto_apply.checked = false;
+  if (form.elements.auto_submit.disabled) form.elements.auto_submit.checked = false;
+}
+
+function renderAgentScheduler(scheduler) {
+  const running = scheduler.running;
+  document.getElementById("agent-run-btn").hidden = running;
+  document.getElementById("agent-stop-btn").hidden = !running;
+  document.getElementById("count-agent").textContent = running ? "•" : "";
+
+  const parts = [];
+  if (running) parts.push("A run is in progress.");
+  if (scheduler.enabled && scheduler.next_run_at) {
+    const next = new Date(scheduler.next_run_at);
+    parts.push(next <= new Date()
+      ? "Scheduled: due now."
+      : `Scheduled: next run ${next.toLocaleString()}.`);
+  } else if (!scheduler.enabled) {
+    parts.push("Scheduling is off — use Run now, or `python -m app agent` from cron.");
+  }
+  if (scheduler.last_run_at) parts.push(`Last run ${relativeDate(scheduler.last_run_at)}.`);
+  document.getElementById("agent-schedule").textContent = parts.join(" ");
+
+  // Poll only while something is actually happening.
+  clearInterval(agentPollTimer);
+  if (running) agentPollTimer = setInterval(refreshAgentProgress, 3000);
+}
+
+async function refreshAgentProgress() {
+  const payload = await api("/api/agent/runs?limit=10");
+  renderAgentRuns(payload.runs);
+  renderAgentScheduler(payload.scheduler);
+  if (!payload.scheduler.running) {
+    await Promise.all([loadJobs(), loadApplications(), loadStatus()]);
+  }
+}
+
+async function loadAgentRuns() {
+  const payload = await api("/api/agent/runs?limit=10");
+  renderAgentRuns(payload.runs);
+}
+
+const STAGE_TONE = { ok: "good", planned: "mid", needs_review: "mid", skip: "", error: "low",
+  failed: "low" };
+
+function renderAgentRuns(runs) {
+  const container = document.getElementById("agent-runs");
+  if (!runs.length) {
+    container.innerHTML = `<div class="empty"><p>No runs yet.</p>
+      <p class="hint">Press <strong>Run now</strong>. In dry-run mode it costs nothing and shows
+      you exactly which jobs it would go after.</p></div>`;
+    return;
+  }
+
+  container.innerHTML = runs.map((run) => {
+    const stats = run.stats || {};
+    const summary = ["scanned", "shortlisted", "reviewed", "tailored", "applied", "submitted",
+      "followups", "errors"]
+      .filter((key) => stats[key]).map((key) => `${stats[key]} ${key}`).join(" · ");
+    return `
+      <article class="run" data-run="${run.id}">
+        <div class="run-head">
+          <div>
+            <strong>Run ${run.id}</strong>
+            <span class="pill ${run.status === "error" ? "pill-bad" : "pill-muted"}">${escapeHtml(run.status)}</span>
+            ${run.dry_run ? `<span class="pill">dry run</span>` : ""}
+            <span class="hint">${escapeHtml(run.trigger)} · ${relativeDate(run.started_at)}</span>
+          </div>
+          <button class="btn btn-sm btn-ghost" data-run-toggle="${run.id}">Details</button>
+        </div>
+        <div class="hint">${escapeHtml(summary || "nothing to do")}</div>
+        ${(stats.notes || []).map((note) => `<div class="hint">↳ ${escapeHtml(note)}</div>`).join("")}
+        ${run.error ? `<div class="hint error">${escapeHtml(run.error)}</div>` : ""}
+        <div class="run-actions" id="run-actions-${run.id}" hidden></div>
+      </article>`;
+  }).join("");
+}
+
+document.getElementById("agent-runs").addEventListener("click", async (event) => {
+  const button = event.target.closest("[data-run-toggle]");
+  if (!button) return;
+  const id = button.dataset.runToggle;
+  const body = document.getElementById(`run-actions-${id}`);
+  if (!body.hidden) { body.hidden = true; button.textContent = "Details"; return; }
+
+  const run = await api(`/api/agent/runs/${id}`);
+  body.innerHTML = run.actions.length
+    ? run.actions.map((action) => `
+        <div class="run-action">
+          <span class="pill pill-${STAGE_TONE[action.decision] || "muted"}">${escapeHtml(action.stage)}</span>
+          <div>
+            ${action.title
+              ? `<a href="${escapeHtml(action.url || "#")}" target="_blank" rel="noopener">
+                   ${escapeHtml(action.title)}</a>
+                 <span class="hint">${escapeHtml(action.company || "")}</span>` : ""}
+            <div class="hint">${escapeHtml(action.detail)}</div>
+          </div>
+        </div>`).join("")
+    : `<p class="hint">Nothing logged for this run.</p>`;
+  body.hidden = false;
+  button.textContent = "Hide";
+});
+
+document.getElementById("agent-form").addEventListener("change", applyAgentFormRules);
+
+document.getElementById("agent-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = event.target;
+  const body = { company_blocklist: linesToList(form.elements.company_blocklist.value) };
+  AGENT_FLAGS.forEach((key) => { body[key] = form.elements[key].checked; });
+  AGENT_NUMBERS.forEach((key) => { body[key] = Number(form.elements[key].value); });
+  body.feeds = [...document.querySelectorAll("#agent-feeds [data-feed]")]
+    .filter((input) => input.checked).map((input) => input.dataset.feed);
+
+  if (body.auto_submit) {
+    const ok = confirm(
+      "Auto-submit sends applications under your name without you seeing them first.\n\n" +
+      `Up to ${body.max_applications_per_day} per day. Forms with unanswered required fields ` +
+      "are always held back.\n\nTurn it on?");
+    if (!ok) { form.elements.auto_submit.checked = false; return; }
+    body.confirm_auto_submit = true;
+  }
+
+  try {
+    await api("/api/agent/settings", { method: "PUT", body });
+    document.getElementById("agent-saved").textContent = "Saved";
+    setTimeout(() => { document.getElementById("agent-saved").textContent = ""; }, 2500);
+    await loadAgent();
+  } catch (error) {
+    toast(error.message, true);
+  }
+});
+
+document.getElementById("agent-run-btn").addEventListener("click", async (event) => {
+  try {
+    const result = await withBusy(event.currentTarget, () =>
+      api("/api/agent/run", { method: "POST", body: {} }));
+    toast(result.dry_run ? "Dry run started — nothing will be sent" : "Agent run started");
+    await refreshAgentProgress();
+  } catch (error) {
+    toast(error.message, true);
+  }
+});
+
+document.getElementById("agent-stop-btn").addEventListener("click", async (event) => {
+  await withBusy(event.currentTarget, () => api("/api/agent/stop", { method: "POST" }));
+  toast("Stopping after the current job");
+});
+
 /* ------------------------------------------------------------------- tabs */
 
 document.getElementById("tabs").addEventListener("click", (event) => {
@@ -674,7 +939,8 @@ document.getElementById("only-untracked").addEventListener("change", loadJobs);
     await loadStatus();
     document.getElementById("company-ats").innerHTML =
       (state.status.ats_choices || []).map((ats) => `<option>${ats}</option>`).join("");
-    await Promise.all([loadProfile(), loadJobs(), loadApplications(), loadCompanies(), loadSuggestions()]);
+    await Promise.all([loadProfile(), loadJobs(), loadApplications(), loadCompanies(),
+      loadSuggestions(), loadAgent()]);
     if (!state.status.profile_ready) {
       document.querySelector('.tab[data-view="profile"]').click();
       toast("Start by filling in your profile — it drives matching and every document.");
